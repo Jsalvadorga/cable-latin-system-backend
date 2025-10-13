@@ -1,0 +1,103 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+# ==============================
+# ENTORNOS VIRTUALES Y DEPENDENCIAS
+# ==============================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+node_modules/
+
+# ==============================
+# ARCHIVOS DE CONFIGURACIÓN SENSIBLES
+# ==============================
+.env
+*.env.*
+*.key
+*.pem
+*.crt
+*.cert
+*.p12
+*.pfx
+
+# ==============================
+# ARCHIVOS COMPILADOS DE PYTHON
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# ==============================
+# ARCHIVOS DE LOGS Y TEMPORALES
+# ==============================
+*.log
+*.pot
+*.mo
+*.db
+*.sqlite3
+*.tmp
+*.bak
+*.swp
+*.swo
+*.pid
+
+# ==============================
+# COMPILACIONES Y DISTRIBUCIÓN
+# ==============================
+build/
+dist/
+*.egg-info/
+.eggs/
+MANIFEST
+
+# ==============================
+# CONFIGURACIÓN DE IDEs
+# ==============================
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ==============================
+# SISTEMAS OPERATIVOS
+# ==============================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ==============================
+# TESTS Y COBERTURA
+# ==============================
+.coverage
+.tox/
+nosetests.xml
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# ==============================
+# CACHE DE APLICACIONES
+# ==============================
+.cache/
+migrations/__pycache__/
+app/__pycache__/
+**/__pycache__/
+
+# ==============================
+# ARCHIVOS DE SERVIDORES Y HERRAMIENTAS
+# ==============================
+*.pid
+*.seed
+*.pid.lock
+
+# ==============================
+# FIREBASE Y FRONTEND
+# ==============================
+firebase-debug.log*
+firebase-debug.*.log*
+.dataconnect
