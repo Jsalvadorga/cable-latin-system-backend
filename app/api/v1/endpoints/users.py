@@ -3,7 +3,6 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
-import urllib.parse as up
 
 # Router
 router = APIRouter()
@@ -36,7 +35,7 @@ def get_connection():
         )
 
 # -------------------------------------------------
-# 🔹 Modelo Pydantic (para crear usuarios si deseas usarlo luego)
+# 🔹 Modelo Pydantic (para crear usuarios)
 # -------------------------------------------------
 class User(BaseModel):
     username: str
@@ -50,7 +49,7 @@ def get_users():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        # ✅ Corregido: se usa "created_at" entre comillas dobles
+        # Incluye también la fecha de creación
         cur.execute("SELECT id, username, created_at FROM users ORDER BY id ASC;")
         users = cur.fetchall()
         cur.close()
@@ -82,7 +81,7 @@ def delete_user(username: str):
         raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {e}")
 
 # -------------------------------------------------
-# 🔹 Crear usuario (por si aún no lo tenías)
+# 🔹 Crear usuario
 # -------------------------------------------------
 @router.post("/register")
 def register_user(user: User):
@@ -96,13 +95,17 @@ def register_user(user: User):
             raise HTTPException(status_code=400, detail="El usuario ya existe")
 
         cur.execute(
-            "INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id;",
+            "INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id, created_at;",
             (user.username, user.password)
         )
-        new_id = cur.fetchone()["id"]
+        result = cur.fetchone()
         conn.commit()
         cur.close()
         conn.close()
-        return {"id": new_id, "username": user.username}
+        return {
+            "id": result["id"],
+            "username": user.username,
+            "created_at": result["created_at"]
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al registrar usuario: {e}")
