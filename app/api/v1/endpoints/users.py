@@ -50,7 +50,8 @@ def get_users():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT id, username FROM users ORDER BY id ASC;")
+        # ✅ Corregido: se usa "created_at" entre comillas dobles
+        cur.execute('SELECT id, username, "created_at" FROM users ORDER BY id ASC;')
         users = cur.fetchall()
         cur.close()
         conn.close()
