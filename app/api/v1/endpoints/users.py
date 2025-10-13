@@ -2,27 +2,38 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import os
+import urllib.parse as up
 
 # Router
 router = APIRouter()
 
-# 🔹 Configuración de la base de datos
-DB_HOST = "127.0.0.1"
-DB_PORT = "5432"
-DB_NAME = "cable_latin_db"
-DB_USER = "postgres"
-DB_PASS = "MiNuevaClave123"
-
-
+# -------------------------------------------------
+# 🔹 Conexión dinámica (Render o local)
+# -------------------------------------------------
 def get_connection():
-    return psycopg2.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME,
-        user=DB_USER,
-        password=DB_PASS,
-        cursor_factory=RealDictCursor
-    )
+    db_url = os.getenv("DATABASE_URL")
+
+    if db_url:
+        # Render usa 'postgres://' pero psycopg2 requiere 'postgresql://'
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    else:
+        # Config local por si lo ejecutas desde tu PC
+        DB_HOST = "127.0.0.1"
+        DB_PORT = "5432"
+        DB_NAME = "cable_latin_db"
+        DB_USER = "postgres"
+        DB_PASS = "MiNuevaClave123"
+        return psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            cursor_factory=RealDictCursor
+        )
 
 # -------------------------------------------------
 # 🔹 Modelo Pydantic (para crear usuarios si deseas usarlo luego)
@@ -30,7 +41,6 @@ def get_connection():
 class User(BaseModel):
     username: str
     password: str
-
 
 # -------------------------------------------------
 # 🔹 Listar todos los usuarios
@@ -47,7 +57,6 @@ def get_users():
         return users
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener usuarios: {e}")
-
 
 # -------------------------------------------------
 # 🔹 Eliminar usuario
@@ -70,7 +79,6 @@ def delete_user(username: str):
         return {"message": f"✅ Usuario '{username}' eliminado correctamente"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {e}")
-
 
 # -------------------------------------------------
 # 🔹 Crear usuario (por si aún no lo tenías)
