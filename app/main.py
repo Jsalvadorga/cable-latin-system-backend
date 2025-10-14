@@ -1,20 +1,20 @@
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
+from typing import List
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
 from passlib.context import CryptContext
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
 
 # -------------------------------------------------
-# 🔹 Configuración inicial
+# 🔹 Configuración
 # -------------------------------------------------
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
-# -------------------------------------------------
-# 🔹 CORS para permitir Firebase frontend y local dev
-# -------------------------------------------------
 origins = [
     "https://cable-latin-system.web.app",
     "https://cable-latin-system.firebaseapp.com",
@@ -31,25 +31,47 @@ app.add_middleware(
 )
 
 # -------------------------------------------------
-# 🔹 Seguridad de contraseñas
+# 🔹 Seguridad de contraseñas y JWT
 # -------------------------------------------------
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "clave_jwt_ultra_secreta")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = 60
 
 def hash_password(password: str):
     return pwd_context.hash(password)
 
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def create_access_token(data: dict, expires_delta: timedelta = None):
+    to_encode = data.copy()
+    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    return encoded_jwt
+
+def decode_access_token(token: str):
+    try:
+        payload = jwt.decode(token, JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Token inválido")
+        return username
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
 # -------------------------------------------------
-# 🔹 Conexión a PostgreSQL (Render o local)
+# 🔹 Conexión PostgreSQL
 # -------------------------------------------------
 def get_connection():
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
-        return psycopg2.connect(db_url, cursor_factory=RealDictCursor, sslmode="require")
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     else:
         DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
         DB_PORT = os.getenv("DB_PORT", "5432")
@@ -66,9 +88,9 @@ def get_connection():
         )
 
 # -------------------------------------------------
-# 🔹 Crear tabla clients si no existe
+# 🔹 Crear tablas si no existen
 # -------------------------------------------------
-def create_clients_table():
+def create_tables():
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -86,41 +108,26 @@ def create_clients_table():
                 created_at TIMESTAMP DEFAULT NOW()
             );
         """)
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("✅ Tabla 'clients' verificada o creada correctamente.")
-    except Exception as e:
-        print(f"⚠️ Error al crear/verificar la tabla 'clients': {e}")
-
-# -------------------------------------------------
-# 🔹 Crear tabla users si no existe
-# -------------------------------------------------
-def create_users_table():
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(50) UNIQUE NOT NULL,
-                password TEXT NOT NULL,
+                password VARCHAR(200) NOT NULL,
+                full_name VARCHAR(100),
                 created_at TIMESTAMP DEFAULT NOW()
             );
         """)
         conn.commit()
         cur.close()
         conn.close()
-        print("✅ Tabla 'users' verificada o creada correctamente.")
+        print("✅ Tablas 'clients' y 'users' verificadas o creadas correctamente.")
     except Exception as e:
-        print(f"⚠️ Error al crear/verificar la tabla 'users': {e}")
+        print(f"⚠️ Error al crear/verificar tablas: {e}")
 
-# 🔹 Ejecutar creación de tablas
-create_clients_table()
-create_users_table()
+create_tables()
 
 # -------------------------------------------------
-# 🔹 Modelo Cliente
+# 🔹 Modelos
 # -------------------------------------------------
 class Client(BaseModel):
     full_name: str
@@ -132,123 +139,127 @@ class Client(BaseModel):
     client_type: str
     plan_type: str
 
+class User(BaseModel):
+    username: str
+    password: str
+    full_name: str = ""
+
 # -------------------------------------------------
-# 🔹 CRUD Clientes
+# 🔹 Dependencia de usuario actual con JWT
 # -------------------------------------------------
-@app.get("/api/v1/clients")
-def get_clients():
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM clients ORDER BY created_at DESC;")
-        clients = cur.fetchall()
-        cur.close()
-        conn.close()
-        return clients
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def get_current_user(token: str = Depends(oauth2_scheme)):
+    username = decode_access_token(token)
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE username=%s;", (username,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not user:
+        raise HTTPException(status_code=401, detail="Usuario no encontrado")
+    return user
+
+# -------------------------------------------------
+# 🔹 CRUD CLIENTES (requiere token)
+# -------------------------------------------------
+@app.get("/api/v1/clients", response_model=List[Client])
+def get_clients(current_user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM clients ORDER BY id ASC;")
+    clients = cur.fetchall()
+    cur.close()
+    conn.close()
+    return clients
 
 @app.post("/api/v1/clients")
-def create_client(client: Client):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO clients 
-            (full_name, document, email, phone_number, service_address, billing_address, client_type, plan_type)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            RETURNING id;
-        """, (
-            client.full_name,
-            client.document,
-            client.email,
-            client.phone_number,
-            client.service_address,
-            client.billing_address,
-            client.client_type,
-            client.plan_type
-        ))
-        client_id = cur.fetchone()["id"]
-        conn.commit()
-        cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
-        cliente_creado = cur.fetchone()
-        cur.close()
-        conn.close()
-        return {"message": "Cliente creado correctamente", "client": cliente_creado}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def create_client(client: Client, current_user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO clients (full_name, document, email, phone_number, service_address, billing_address, client_type, plan_type)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id;
+    """, (
+        client.full_name, client.document, client.email, client.phone_number,
+        client.service_address, client.billing_address, client.client_type, client.plan_type
+    ))
+    client_id = cur.fetchone()["id"]
+    conn.commit()
+    cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
+    created = cur.fetchone()
+    cur.close()
+    conn.close()
+    return {"message": "Cliente creado correctamente", "client": created}
 
 @app.put("/api/v1/clients/{client_id}")
-def update_client(client_id: int, client: Client):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
-        existing = cur.fetchone()
-        if not existing:
-            raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-        cur.execute("""
-            UPDATE clients
-            SET full_name=%s, document=%s, email=%s, phone_number=%s,
-                service_address=%s, billing_address=%s, client_type=%s, plan_type=%s
-            WHERE id=%s RETURNING *;
-        """, (
-            client.full_name, client.document, client.email, client.phone_number,
-            client.service_address, client.billing_address, client.client_type, client.plan_type, client_id
-        ))
-        updated_client = cur.fetchone()
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"message": "Cliente actualizado correctamente", "client": updated_client}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"No se pudo actualizar el cliente: {e}")
+def update_client(client_id: int, client: Client, current_user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
+    existing = cur.fetchone()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cur.execute("""
+        UPDATE clients
+        SET full_name=%s, document=%s, email=%s, phone_number=%s,
+            service_address=%s, billing_address=%s, client_type=%s, plan_type=%s
+        WHERE id=%s RETURNING *;
+    """, (
+        client.full_name, client.document, client.email, client.phone_number,
+        client.service_address, client.billing_address, client.client_type, client.plan_type, client_id
+    ))
+    updated = cur.fetchone()
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"message": "Cliente actualizado correctamente", "client": updated}
 
 @app.delete("/api/v1/clients/{client_id}")
-def delete_client(client_id: int):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
-        existing = cur.fetchone()
-        if not existing:
-            raise HTTPException(status_code=404, detail="Cliente no encontrado")
-
-        cur.execute("DELETE FROM clients WHERE id=%s;", (client_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"message": "Cliente eliminado correctamente"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+def delete_client(client_id: int, current_user: dict = Depends(get_current_user)):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
+    existing = cur.fetchone()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    cur.execute("DELETE FROM clients WHERE id=%s;", (client_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"message": "Cliente eliminado correctamente"}
 
 # -------------------------------------------------
-# 🔹 Login usuarios
+# 🔹 Usuarios y login JWT
 # -------------------------------------------------
+@app.post("/api/v1/users")
+def create_user(user: User):
+    conn = get_connection()
+    cur = conn.cursor()
+    hashed = hash_password(user.password)
+    cur.execute("INSERT INTO users (username, password, full_name) VALUES (%s,%s,%s) RETURNING id;",
+                (user.username, hashed, user.full_name))
+    user_id = cur.fetchone()["id"]
+    conn.commit()
+    cur.close()
+    conn.close()
+    return {"message": "Usuario creado correctamente", "user_id": user_id}
+
 @app.post("/api/v1/auth/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username=%s;", (form_data.username,))
-        user = cur.fetchone()
-        cur.close()
-        conn.close()
-
-        if not user or not verify_password(form_data.password, user["password"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Credenciales incorrectas"
-            )
-        # 🔹 Retornar JWT simulado
-        return {"access_token": f"jwt-token-for-{user['username']}", "token_type": "bearer"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al autenticar usuario: {e}")
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE username=%s;", (form_data.username,))
+    user = cur.fetchone()
+    cur.close()
+    conn.close()
+    if not user or not verify_password(form_data.password, user["password"]):
+        raise HTTPException(status_code=401, detail="Usuario o contraseña incorrectos")
+    token = create_access_token({"sub": user["username"]})
+    return {"access_token": token, "token_type": "bearer"}
 
 # -------------------------------------------------
 # 🔹 Endpoint raíz
 # -------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente."}
+    return {"message": "✅ API de Clientes y Usuarios funcionando con JWT"}
