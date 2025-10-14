@@ -28,6 +28,8 @@ app.include_router(users.router, prefix="/api/v1", tags=["Users"])
 origins = [
     "https://cable-latin-system.web.app",
     "https://cable-latin-system.firebaseapp.com",
+    "http://localhost:3000",  # si usabas React tradicional
+    "http://localhost:5173",  # para Vite dev server
 ]
 
 app.add_middleware(
