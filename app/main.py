@@ -8,17 +8,16 @@ from app.api.v1.endpoints import users
 from app.api.v1.endpoints import clients
 from psycopg2.extras import RealDictCursor
 import os
-import urllib.parse as up
 
 # -------------------------------------------------
 # 🔹 Configuración inicial
 # -------------------------------------------------
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
+# Incluimos los routers
 app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
-app.include_router(users.router, prefix="/api/v1/auth", tags=["Users"])
-
+app.include_router(users.router, prefix="/api/v1", tags=["Users"])  # ✅ Cambiado
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,14 +33,13 @@ app.add_middleware(
 def get_connection():
     """Devuelve una conexión activa a la base de datos (Render o local)."""
     db_url = os.getenv("DATABASE_URL")
+    print("DATABASE_URL actual:", db_url)  # 🔹 Log temporal para Render
 
     if db_url:
-        # Render agrega 'postgres://' pero psycopg2 requiere 'postgresql://'
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
     else:
-        # Conexión local
         DB_HOST = "127.0.0.1"
         DB_PORT = "5432"
         DB_NAME = "cable_latin_db"
@@ -55,6 +53,7 @@ def get_connection():
             password=DB_PASS,
             cursor_factory=RealDictCursor
         )
+
 # -------------------------------------------------
 # 🔹 Crear tabla de clientes (si no existe)
 # -------------------------------------------------
@@ -82,7 +81,6 @@ def create_table_if_not_exists():
         print("✅ Tabla 'clients' verificada o creada correctamente.")
     except Exception as e:
         print(f"⚠️ Error al crear/verificar la tabla 'clients': {e}")
-
 
 create_table_if_not_exists()
 
@@ -138,7 +136,6 @@ def create_client(client: Client):
         client_id = cur.fetchone()["id"]
         conn.commit()
 
-        # 🔹 Nuevo: devolver el cliente completo recién creado
         cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
         cliente_creado = cur.fetchone()
 
@@ -196,49 +193,6 @@ def delete_client(client_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-# -------------------------------------------------
-# 🔹 NUEVO: Endpoints USUARIOS
-# -------------------------------------------------
-class UserDB(BaseModel):
-    username: str
-    password: str
-
-@app.get("/api/v1/users")
-def get_users():
-    """Obtiene todos los usuarios registrados"""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT id, username, created_at FROM users ORDER BY id ASC;")
-        users = cur.fetchall()
-        cur.close()
-        conn.close()
-        return users
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al obtener usuarios: {e}")
-
-
-@app.delete("/api/v1/users/{user_id}")
-def delete_user(user_id: int):
-    """Elimina un usuario por su ID"""
-    try:
-        conn = get_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE id = %s;", (user_id,))
-        user = cur.fetchone()
-        if not user:
-            raise HTTPException(status_code=404, detail="Usuario no encontrado")
-
-        cur.execute("DELETE FROM users WHERE id = %s;", (user_id,))
-        conn.commit()
-        cur.close()
-        conn.close()
-        return {"message": f"Usuario '{user['username']}' eliminado correctamente"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {e}")
-
-
 # -------------------------------------------------
 # 🔹 Endpoint Login temporal
 # -------------------------------------------------
@@ -249,10 +203,9 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     else:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
 
-
 # -------------------------------------------------
 # 🔹 Endpoint raíz
 # -------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente"}
+    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente, Sistema de Juanjo"}
