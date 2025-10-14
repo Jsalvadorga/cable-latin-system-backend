@@ -3,12 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
-from app.api.v1.endpoints import auth
-from app.api.v1.endpoints import users
-from app.api.v1.endpoints import clients
 from psycopg2.extras import RealDictCursor
 import os
-from passlib.context import CryptContext  # 🔹 Para hashear contraseñas
+from passlib.context import CryptContext
 
 # -------------------------------------------------
 # 🔹 Configuración inicial
@@ -16,20 +13,13 @@ from passlib.context import CryptContext  # 🔹 Para hashear contraseñas
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
 # -------------------------------------------------
-# 🔹 Routers existentes
-# -------------------------------------------------
-app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
-app.include_router(users.router, prefix="/api/v1", tags=["Users"])
-
-# -------------------------------------------------
-# 🔹 CORS para permitir Firebase frontend
+# 🔹 CORS para permitir Firebase frontend y local dev
 # -------------------------------------------------
 origins = [
     "https://cable-latin-system.web.app",
     "https://cable-latin-system.firebaseapp.com",
-    "http://localhost:3000",  # si usabas React tradicional
-    "http://localhost:5173",  # para Vite dev server
+    "http://localhost:3000",
+    "http://localhost:5173",
 ]
 
 app.add_middleware(
@@ -39,31 +29,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# -------------------------------------------------
-# 🔹 Conexión a la base de datos PostgreSQL
-# -------------------------------------------------
-def get_connection():
-    db_url = os.getenv("DATABASE_URL")
-    print("DATABASE_URL actual:", db_url)
-    if db_url:
-        if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
-        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
-    else:
-        DB_HOST = "127.0.0.1"
-        DB_PORT = "5432"
-        DB_NAME = "cable_latin_db"
-        DB_USER = "postgres"
-        DB_PASS = "MiNuevaClave123"
-        return psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASS,
-            cursor_factory=RealDictCursor
-        )
 
 # -------------------------------------------------
 # 🔹 Seguridad de contraseñas
@@ -77,9 +42,33 @@ def hash_password(password: str):
     return pwd_context.hash(password)
 
 # -------------------------------------------------
-# 🔹 Crear tabla de clientes (si no existe)
+# 🔹 Conexión a PostgreSQL (Render o local)
 # -------------------------------------------------
-def create_table_if_not_exists():
+def get_connection():
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor, sslmode="require")
+    else:
+        DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
+        DB_PORT = os.getenv("DB_PORT", "5432")
+        DB_NAME = os.getenv("DB_NAME", "cable_latin_db")
+        DB_USER = os.getenv("DB_USER", "postgres")
+        DB_PASS = os.getenv("DB_PASS", "MiNuevaClave123")
+        return psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            cursor_factory=RealDictCursor
+        )
+
+# -------------------------------------------------
+# 🔹 Crear tabla clients si no existe
+# -------------------------------------------------
+def create_clients_table():
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -104,7 +93,31 @@ def create_table_if_not_exists():
     except Exception as e:
         print(f"⚠️ Error al crear/verificar la tabla 'clients': {e}")
 
-create_table_if_not_exists()
+# -------------------------------------------------
+# 🔹 Crear tabla users si no existe
+# -------------------------------------------------
+def create_users_table():
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW()
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Tabla 'users' verificada o creada correctamente.")
+    except Exception as e:
+        print(f"⚠️ Error al crear/verificar la tabla 'users': {e}")
+
+# 🔹 Ejecutar creación de tablas
+create_clients_table()
+create_users_table()
 
 # -------------------------------------------------
 # 🔹 Modelo Cliente
@@ -120,14 +133,14 @@ class Client(BaseModel):
     plan_type: str
 
 # -------------------------------------------------
-# 🔹 Endpoints CLIENTES
+# 🔹 CRUD Clientes
 # -------------------------------------------------
 @app.get("/api/v1/clients")
 def get_clients():
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM clients ORDER BY id ASC")
+        cur.execute("SELECT * FROM clients ORDER BY created_at DESC;")
         clients = cur.fetchall()
         cur.close()
         conn.close()
@@ -141,7 +154,8 @@ def create_client(client: Client):
         conn = get_connection()
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO clients (full_name, document, email, phone_number, service_address, billing_address, client_type, plan_type)
+            INSERT INTO clients 
+            (full_name, document, email, phone_number, service_address, billing_address, client_type, plan_type)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
             RETURNING id;
         """, (
@@ -156,7 +170,7 @@ def create_client(client: Client):
         ))
         client_id = cur.fetchone()["id"]
         conn.commit()
-        cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
+        cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
         cliente_creado = cur.fetchone()
         cur.close()
         conn.close()
@@ -169,7 +183,7 @@ def update_client(client_id: int, client: Client):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
+        cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
         existing = cur.fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
@@ -183,7 +197,6 @@ def update_client(client_id: int, client: Client):
             client.full_name, client.document, client.email, client.phone_number,
             client.service_address, client.billing_address, client.client_type, client.plan_type, client_id
         ))
-
         updated_client = cur.fetchone()
         conn.commit()
         cur.close()
@@ -197,12 +210,12 @@ def delete_client(client_id: int):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
+        cur.execute("SELECT * FROM clients WHERE id=%s;", (client_id,))
         existing = cur.fetchone()
         if not existing:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
 
-        cur.execute("DELETE FROM clients WHERE id = %s;", (client_id,))
+        cur.execute("DELETE FROM clients WHERE id=%s;", (client_id,))
         conn.commit()
         cur.close()
         conn.close()
@@ -211,17 +224,14 @@ def delete_client(client_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------------------------------
-# 🔹 Endpoint Login con usuarios reales de DB
+# 🔹 Login usuarios
 # -------------------------------------------------
 @app.post("/api/v1/auth/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     try:
         conn = get_connection()
         cur = conn.cursor()
-        cur.execute(
-            "SELECT * FROM users WHERE username=%s",
-            (form_data.username,)
-        )
+        cur.execute("SELECT * FROM users WHERE username=%s;", (form_data.username,))
         user = cur.fetchone()
         cur.close()
         conn.close()
@@ -231,7 +241,7 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Credenciales incorrectas"
             )
-
+        # 🔹 Retornar JWT simulado
         return {"access_token": f"jwt-token-for-{user['username']}", "token_type": "bearer"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al autenticar usuario: {e}")
@@ -241,4 +251,4 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 # -------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente, Sistema de Juanjo"}
+    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente."}
