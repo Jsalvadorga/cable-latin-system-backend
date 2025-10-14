@@ -8,20 +8,31 @@ from app.api.v1.endpoints import users
 from app.api.v1.endpoints import clients
 from psycopg2.extras import RealDictCursor
 import os
+from passlib.context import CryptContext  # 🔹 Para hashear contraseñas
 
 # -------------------------------------------------
 # 🔹 Configuración inicial
 # -------------------------------------------------
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
-# Incluimos los routers
+# -------------------------------------------------
+# 🔹 Routers existentes
+# -------------------------------------------------
 app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
-app.include_router(users.router, prefix="/api/v1", tags=["Users"])  # ✅ Cambiado
+app.include_router(users.router, prefix="/api/v1", tags=["Users"])
+
+# -------------------------------------------------
+# 🔹 CORS para permitir Firebase frontend
+# -------------------------------------------------
+origins = [
+    "https://cable-latin-system.web.app",
+    "https://cable-latin-system.firebaseapp.com",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,10 +42,8 @@ app.add_middleware(
 # 🔹 Conexión a la base de datos PostgreSQL
 # -------------------------------------------------
 def get_connection():
-    """Devuelve una conexión activa a la base de datos (Render o local)."""
     db_url = os.getenv("DATABASE_URL")
-    print("DATABASE_URL actual:", db_url)  # 🔹 Log temporal para Render
-
+    print("DATABASE_URL actual:", db_url)
     if db_url:
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -53,6 +62,17 @@ def get_connection():
             password=DB_PASS,
             cursor_factory=RealDictCursor
         )
+
+# -------------------------------------------------
+# 🔹 Seguridad de contraseñas
+# -------------------------------------------------
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password, hashed_password):
+    return pwd_context.verify(plain_password, hashed_password)
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
 
 # -------------------------------------------------
 # 🔹 Crear tabla de clientes (si no existe)
@@ -113,7 +133,6 @@ def get_clients():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @app.post("/api/v1/clients")
 def create_client(client: Client):
     try:
@@ -135,16 +154,13 @@ def create_client(client: Client):
         ))
         client_id = cur.fetchone()["id"]
         conn.commit()
-
         cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
         cliente_creado = cur.fetchone()
-
         cur.close()
         conn.close()
         return {"message": "Cliente creado correctamente", "client": cliente_creado}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.put("/api/v1/clients/{client_id}")
 def update_client(client_id: int, client: Client):
@@ -174,7 +190,6 @@ def update_client(client_id: int, client: Client):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo actualizar el cliente: {e}")
 
-
 @app.delete("/api/v1/clients/{client_id}")
 def delete_client(client_id: int):
     try:
@@ -194,14 +209,30 @@ def delete_client(client_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 # -------------------------------------------------
-# 🔹 Endpoint Login temporal
+# 🔹 Endpoint Login con usuarios reales de DB
 # -------------------------------------------------
 @app.post("/api/v1/auth/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    if form_data.username == "admin" and form_data.password == "1234":
-        return {"access_token": "fake-jwt-token-for-admin", "token_type": "bearer"}
-    else:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM users WHERE username=%s",
+            (form_data.username,)
+        )
+        user = cur.fetchone()
+        cur.close()
+        conn.close()
+
+        if not user or not verify_password(form_data.password, user["password"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Credenciales incorrectas"
+            )
+
+        return {"access_token": f"jwt-token-for-{user['username']}", "token_type": "bearer"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al autenticar usuario: {e}")
 
 # -------------------------------------------------
 # 🔹 Endpoint raíz
