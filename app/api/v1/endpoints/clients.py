@@ -1,9 +1,8 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from typing import List
 import psycopg2
 from psycopg2.extras import RealDictCursor
-import os
+from typing import List
 
 router = APIRouter(
     prefix="/api/v1/clients",
@@ -24,13 +23,17 @@ class Client(BaseModel):
     plan_type: str
 
 # -------------------------------
-# Conexión a la base de datos Render usando DATABASE_URL
+# Conexión a la base de datos
 # -------------------------------
 def get_connection():
-    database_url = os.environ.get("DATABASE_URL")
-    if not database_url:
-        raise HTTPException(status_code=500, detail="DATABASE_URL no configurada en Render")
-    return psycopg2.connect(database_url, cursor_factory=RealDictCursor, sslmode="require")
+    return psycopg2.connect(
+        host="127.0.0.1",  # Cambia a tu host de Render si corresponde
+        port="5432",
+        dbname="cable_latin_db",
+        user="postgres",
+        password="MiNuevaClave123",
+        cursor_factory=RealDictCursor
+    )
 
 # -------------------------------
 # GET: Listar clientes
@@ -41,7 +44,8 @@ def get_clients():
     cur = conn.cursor()
     try:
         cur.execute("SELECT * FROM clients ORDER BY created_at DESC;")
-        return cur.fetchall()
+        clients = cur.fetchall()
+        return clients
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener clientes: {str(e)}")
     finally:
@@ -71,9 +75,11 @@ def create_client(client: Client):
             client.client_type,
             client.plan_type
         ))
+
         new_client = cur.fetchone()
         conn.commit()
         return {"client": new_client}
+
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error al crear cliente: {str(e)}")
@@ -112,11 +118,15 @@ def update_client(client_id: int, client: Client):
             client.plan_type,
             client_id
         ))
+
         updated = cur.fetchone()
         conn.commit()
+
         if not updated:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
         return {"client": updated}
+
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error al actualizar cliente: {str(e)}")
@@ -135,9 +145,12 @@ def delete_client(client_id: int):
         cur.execute("DELETE FROM clients WHERE id = %s RETURNING id;", (client_id,))
         deleted = cur.fetchone()
         conn.commit()
+
         if not deleted:
             raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
         return {"message": "Cliente eliminado correctamente"}
+
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=500, detail=f"Error al eliminar cliente: {str(e)}")
