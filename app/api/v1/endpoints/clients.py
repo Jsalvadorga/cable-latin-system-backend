@@ -3,6 +3,8 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List
+import os
+from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
 
 router = APIRouter(
     prefix="/api/v1/clients",
@@ -78,6 +80,37 @@ def create_client(client: Client):
 
         new_client = cur.fetchone()
         conn.commit()
+
+        # 🔹 Enviar mensaje WhatsApp usando Twilio Sandbox
+        try:
+            TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+            TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+            TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # sandbox: whatsapp:+14155238886
+
+            twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+            # Formatear número del cliente con código de país si no tiene
+            phone_to = new_client["phone_number"]
+            if not phone_to.startswith("+"):
+                phone_to = "+51" + phone_to  # Cambia +51 si tu país es otro
+
+            mensaje = (
+                f"¡Hola {new_client['full_name']}! 🎉\n"
+                "Bienvenido a Cable Latín System.\n"
+                "Tu primer pago será el mismo día del próximo mes, y luego se facturará mensualmente."
+            )
+
+            twilio_client.messages.create(
+                body=mensaje,
+                from_=f"whatsapp:{TWILIO_PHONE_NUMBER}",
+                to=f"whatsapp:{phone_to}"
+            )
+
+            print(f"✅ Mensaje de bienvenida enviado a {phone_to}")
+
+        except Exception as e:
+            print(f"⚠️ No se pudo enviar mensaje WhatsApp: {e}")
+
         return {"client": new_client}
 
     except Exception as e:
