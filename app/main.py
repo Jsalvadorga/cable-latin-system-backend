@@ -8,6 +8,7 @@ from app.api.v1.endpoints import users
 from app.api.v1.endpoints import clients
 from psycopg2.extras import RealDictCursor
 import os
+from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
 
 # -------------------------------------------------
 # 🔹 Configuración inicial
@@ -140,6 +141,32 @@ def create_client(client: Client):
         # 🔹 Nuevo: devolver el cliente completo recién creado
         cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
         cliente_creado = cur.fetchone()
+
+        # -----------------------------
+        # 🔹 ENVÍO DE MENSAJE WHATSAPP
+        # -----------------------------
+        try:
+            TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+            TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+            TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Formato: whatsapp:+14155238886
+
+            twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+            mensaje = (
+                f"¡Hola {cliente_creado['full_name']}! 🎉\n"
+                "Bienvenido a Cable Latín System.\n"
+                "Tu primer pago será el mismo día del próximo mes, y luego se facturará mensualmente."
+            )
+
+            twilio_client.messages.create(
+                body=mensaje,
+                from_=f"whatsapp:{TWILIO_PHONE_NUMBER}",
+                to=f"whatsapp:{cliente_creado['phone_number']}"
+            )
+
+            print(f"✅ Mensaje de bienvenida enviado a {cliente_creado['phone_number']}")
+        except Exception as e:
+            print(f"⚠️ No se pudo enviar mensaje WhatsApp: {e}")
 
         cur.close()
         conn.close()
