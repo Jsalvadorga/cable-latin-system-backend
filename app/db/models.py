@@ -1,5 +1,5 @@
 # app/db/models.py
-from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Numeric, Date, DateTime, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.db.base import Base  # adapta la importación según tu estructura
@@ -16,6 +16,9 @@ class Client(Base):
     billing_address = Column(String, nullable=False)
     client_type = Column(String, nullable=False)
     plan_type = Column(String, nullable=True)  # <= agregado (puede ser NULL si no lo llenaste)
+    activo = Column(Boolean, default=True)     # <= nuevo
+    deuda = Column(Numeric(10,2), default=0.0) # <= nuevo
+    vencimiento = Column(Date, nullable=True)  # <= nuevo
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     invoices = relationship("Invoice", back_populates="client", cascade="all, delete-orphan")

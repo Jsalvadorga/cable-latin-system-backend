@@ -3,7 +3,6 @@ from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Optional
-import os
 from datetime import date, datetime
 
 router = APIRouter(
@@ -51,7 +50,12 @@ def get_clients():
         clientes = cur.fetchall()
 
         # Traer facturas pendientes
-        cur.execute("SELECT client_id, SUM(amount) AS deuda_total, MAX(due_date) AS vencimiento FROM invoices WHERE status='pending' GROUP BY client_id;")
+        cur.execute("""
+            SELECT client_id, SUM(amount) AS deuda_total, MAX(due_date) AS vencimiento 
+            FROM invoices 
+            WHERE status='pending' 
+            GROUP BY client_id;
+        """)
         facturas = cur.fetchall()
         facturas_dict = {f["client_id"]: f for f in facturas}
 
@@ -63,14 +67,13 @@ def get_clients():
             vencimiento = datetime.strptime(f["vencimiento"], "%Y-%m-%d").date() if f and f["vencimiento"] else None
 
             cliente["deuda"] = deuda
-            if deuda > 0:
-                # Suspender si ya venció
-                if vencimiento and vencimiento < today:
-                    cliente["activo"] = False
-                else:
-                    cliente["activo"] = True
+            cliente["vencimiento"] = vencimiento
+
+            # Determinar estado
+            if deuda > 0 and vencimiento and vencimiento < today:
+                cliente["activo"] = False
             else:
-                cliente["activo"] = True  # sin deuda, activo
+                cliente["activo"] = True
 
         return clientes
     except Exception as e:
@@ -109,13 +112,18 @@ def update_client(client_id: int, client: ClientUpdate):
     conn = get_connection()
     cur = conn.cursor()
     try:
-        # Obtener deuda pendiente
-        cur.execute("SELECT SUM(amount) AS deuda_total FROM invoices WHERE client_id=%s AND status='pending';", (client_id,))
+        # Obtener deuda pendiente y vencimiento
+        cur.execute("""
+            SELECT SUM(amount) AS deuda_total, MAX(due_date) AS vencimiento
+            FROM invoices
+            WHERE client_id=%s AND status='pending';
+        """, (client_id,))
         deuda_res = cur.fetchone()
         deuda_pendiente = float(deuda_res["deuda_total"]) if deuda_res["deuda_total"] else 0
+        vencimiento = deuda_res["vencimiento"]
 
-        # Determinar estado automático si no se pasó manualmente
-        activo_final = client.activo if client.activo is not None else (deuda_pendiente == 0)
+        today = date.today()
+        activo_final = client.activo if client.activo is not None else (deuda_pendiente == 0 or (vencimiento and vencimiento >= today))
 
         cur.execute("""
             UPDATE clients
@@ -128,7 +136,7 @@ def update_client(client_id: int, client: ClientUpdate):
         """, (
             activo_final,
             client.deuda,
-            client.vencimiento,
+            client.vencimiento or vencimiento,
             client.last_payment,
             client_id
         ))

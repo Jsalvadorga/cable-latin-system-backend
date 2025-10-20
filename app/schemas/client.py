@@ -1,4 +1,6 @@
 from pydantic import BaseModel
+from typing import Optional
+from datetime import date
 
 class ClientBase(BaseModel):
     full_name: str
@@ -15,6 +17,9 @@ class ClientCreate(ClientBase):
 
 class Client(ClientBase):
     id: int
+    activo: bool
+    deuda: float
+    vencimiento: Optional[date] = None
 
     class Config:
         orm_mode = True
