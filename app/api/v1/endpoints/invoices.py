@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-from app.main import get_connection  # Usamos tu función de conexión
+from app.database import get_connection  # ✅ Import desde database.py, no main.py
 
 router = APIRouter()
 

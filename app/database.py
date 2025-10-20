@@ -1,24 +1,33 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-DB_HOST = "127.0.0.1"
-DB_PORT = "5432"
-DB_NAME = "cable_latin_db"
-DB_USER = "postgres"
-DB_PASS = "MiNuevaClave123"  # 👈 cámbiala según tu configuración
+def get_connection():
+    """Devuelve una conexión activa a la base de datos."""
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    else:
+        DB_HOST = "127.0.0.1"
+        DB_PORT = "5432"
+        DB_NAME = "cable_latin_db"
+        DB_USER = "postgres"
+        DB_PASS = "MiNuevaClave123"
+        return psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
+            cursor_factory=RealDictCursor
+        )
 
-SQLALCHEMY_DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
-engine = create_engine(SQLALCHEMY_DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-# Función para obtener sesión de DB
+# 🔹 Dependencia FastAPI para endpoints
 def get_db():
-    db = SessionLocal()
+    conn = get_connection()
     try:
-        yield db
+        yield conn
     finally:
-        db.close()
+        conn.close()
