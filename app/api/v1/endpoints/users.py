@@ -25,7 +25,7 @@ def get_connection():
     )
 
 # -------------------------------------------------
-# 🔹 Modelo Pydantic (para crear usuarios si deseas usarlo luego)
+# 🔹 Modelo Pydantic
 # -------------------------------------------------
 class User(BaseModel):
     username: str
@@ -73,7 +73,7 @@ def delete_user(username: str):
 
 
 # -------------------------------------------------
-# 🔹 Crear usuario (por si aún no lo tenías)
+# 🔹 Crear usuario (Registro)
 # -------------------------------------------------
 @router.post("/register")
 def register_user(user: User):

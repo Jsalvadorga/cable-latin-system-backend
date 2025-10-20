@@ -3,26 +3,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
+from app.api.v1.endpoints import auth
+from app.api.v1.endpoints import users
+from app.api.v1.endpoints import clients
 from psycopg2.extras import RealDictCursor
-from twilio.rest import Client as TwilioClient
 import os
-
-# 🔹 Routers existentes
-from app.api.v1.endpoints import auth, users, clients, invoices, payments
+from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
 
 # -------------------------------------------------
 # 🔹 Configuración inicial
 # -------------------------------------------------
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
-# Routers originales
 app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/auth", tags=["Users"])
-app.include_router(invoices.router, prefix="/api/v1", tags=["Invoices"])
-app.include_router(payments.router, prefix="/api/v1", tags=["Payments"])
 
-# CORS
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,34 +29,34 @@ app.add_middleware(
 )
 
 # -------------------------------------------------
-# 🔹 Conexión a la base de datos
+# 🔹 Conexión a la base de datos PostgreSQL
 # -------------------------------------------------
 def get_connection():
-    """Devuelve una conexión activa a PostgreSQL (local o Render)."""
+    """Devuelve una conexión activa a la base de datos (Render o local)."""
     db_url = os.getenv("DATABASE_URL")
-    print("DATABASE_URL actual:", db_url)
+    print("DATABASE_URL actual:", db_url)  # 🔹 Log temporal para Render
 
-    try:
-        if db_url:  # Para Render u otro servidor
-            if db_url.startswith("postgres://"):
-                db_url = db_url.replace("postgres://", "postgresql://", 1)
-            return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
-
-        # Local
+    if db_url:
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+    else:
+        DB_HOST = "127.0.0.1"
+        DB_PORT = "5432"
+        DB_NAME = "cable_latin_db"
+        DB_USER = "postgres"
+        DB_PASS = "MiNuevaClave123"
         return psycopg2.connect(
-            host="127.0.0.1",
-            port="5432",
-            database="cable_latin_db",
-            user="postgres",
-            password="MiNuevaClave123",
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASS,
             cursor_factory=RealDictCursor
         )
-    except Exception as e:
-        print("❌ Error de conexión a DB:", e)
-        raise
 
 # -------------------------------------------------
-# 🔹 Crear tabla clients si no existe
+# 🔹 Crear tabla de clientes (si no existe)
 # -------------------------------------------------
 def create_table_if_not_exists():
     try:
@@ -86,7 +83,7 @@ def create_table_if_not_exists():
     except Exception as e:
         print(f"⚠️ Error al crear/verificar la tabla 'clients': {e}")
 
-# Ejecutar al iniciar
+
 create_table_if_not_exists()
 
 # -------------------------------------------------
@@ -118,6 +115,7 @@ def get_clients():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @app.post("/api/v1/clients")
 def create_client(client: Client):
     try:
@@ -140,21 +138,24 @@ def create_client(client: Client):
         client_id = cur.fetchone()["id"]
         conn.commit()
 
+        # 🔹 Nuevo: devolver el cliente completo recién creado
         cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
         cliente_creado = cur.fetchone()
 
-        # 🔹 Enviar WhatsApp
+        # -----------------------------
+        # 🔹 ENVÍO DE MENSAJE WHATSAPP
+        # -----------------------------
         try:
             TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
             TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-            TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
+            TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Formato: whatsapp:+14155238886
 
             twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
             mensaje = (
                 f"¡Hola {cliente_creado['full_name']}! 🎉\n"
                 "Bienvenido a Cable Latín System.\n"
-                "Tu primer pago será el mismo día del próximo mes."
+                "Tu primer pago será el mismo día del próximo mes, y luego se facturará mensualmente."
             )
 
             twilio_client.messages.create(
@@ -162,9 +163,10 @@ def create_client(client: Client):
                 from_=f"whatsapp:{TWILIO_PHONE_NUMBER}",
                 to=f"whatsapp:{cliente_creado['phone_number']}"
             )
-            print(f"✅ Mensaje enviado a {cliente_creado['phone_number']}")
+
+            print(f"✅ Mensaje de bienvenida enviado a {cliente_creado['phone_number']}")
         except Exception as e:
-            print(f"⚠️ No se pudo enviar WhatsApp: {e}")
+            print(f"⚠️ No se pudo enviar mensaje WhatsApp: {e}")
 
         cur.close()
         conn.close()
@@ -172,8 +174,57 @@ def create_client(client: Client):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.put("/api/v1/clients/{client_id}")
+def update_client(client_id: int, client: Client):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
+        existing = cur.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+        cur.execute("""
+            UPDATE clients
+            SET full_name=%s, document=%s, email=%s, phone_number=%s,
+                service_address=%s, billing_address=%s, client_type=%s, plan_type=%s
+            WHERE id=%s RETURNING *;
+        """, (
+            client.full_name, client.document, client.email, client.phone_number,
+            client.service_address, client.billing_address, client.client_type, client.plan_type, client_id
+        ))
+
+        updated_client = cur.fetchone()
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"message": "Cliente actualizado correctamente", "client": updated_client}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"No se pudo actualizar el cliente: {e}")
+
+
+@app.delete("/api/v1/clients/{client_id}")
+def delete_client(client_id: int):
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
+        existing = cur.fetchone()
+        if not existing:
+            raise HTTPException(status_code=404, detail="Cliente no encontrado")
+
+        cur.execute("DELETE FROM clients WHERE id = %s;", (client_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return {"message": "Cliente eliminado correctamente"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # -------------------------------------------------
-# 🔹 USERS
+# 🔹 NUEVO: Endpoints USUARIOS
 # -------------------------------------------------
 class UserDB(BaseModel):
     username: str
@@ -181,6 +232,7 @@ class UserDB(BaseModel):
 
 @app.get("/api/v1/users")
 def get_users():
+    """Obtiene todos los usuarios registrados"""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -192,8 +244,10 @@ def get_users():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener usuarios: {e}")
 
+
 @app.delete("/api/v1/users/{user_id}")
 def delete_user(user_id: int):
+    """Elimina un usuario por su ID"""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -210,20 +264,22 @@ def delete_user(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {e}")
 
+
 # -------------------------------------------------
-# 🔹 Login
+# 🔹 Endpoint Login temporal
 # -------------------------------------------------
 @app.post("/api/v1/auth/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     if form_data.username == "admin" and form_data.password == "1234":
         return {"access_token": "fake-jwt-token-for-admin", "token_type": "bearer"}
     else:
-        raise HTTPException(status_code=401, detail="Credenciales incorrectas")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
+
 
 # -------------------------------------------------
 # 🔹 Endpoint raíz
 # -------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente"}
+    return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente, sistema juanjo"}
 

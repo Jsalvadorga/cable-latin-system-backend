@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import psycopg2
 from psycopg2.extras import RealDictCursor
+import bcrypt
 import os
 
 router = APIRouter()
@@ -11,8 +12,10 @@ router = APIRouter()
 # 🔹 Configuración de la conexión a la base de datos
 # -------------------------------------------------
 def get_connection():
-    db_url = os.getenv('DATABASE_URL')
+    db_url =os.getenv('DATABASE_URL')
+
     if db_url:
+        # Render usa 'postgres://' pero psycopg2 requiere 'postgresql://'
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
         return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
@@ -22,20 +25,49 @@ def get_connection():
         DB_NAME = "cable_latin_db"
         DB_USER = "postgres"
         DB_PASS = "MiNuevaClave123"
-        return psycopg2.connect(
-            host=DB_HOST, port=DB_PORT, database=DB_NAME,
-            user=DB_USER, password=DB_PASS, cursor_factory=RealDictCursor
-        )
+
+    return psycopg2.connect(
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASS,
+        cursor_factory=RealDictCursor
+    )
 
 # -------------------------------------------------
-# 🔹 Modelo Pydantic
+# 🔹 Modelo Pydantic para registrar usuarios
 # -------------------------------------------------
 class RegisterUser(BaseModel):
     username: str
     password: str
 
 # -------------------------------------------------
-# 🔹 Endpoint: Registrar usuario (SIEMPRE COMO LECTOR)
+# 🔹 Crear tabla de usuarios si no existe (con 'password' y NO 'rol')
+# -------------------------------------------------
+def create_users_table():
+    try:
+        conn = get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                password VARCHAR(255) NOT NULL
+            );
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("✅ Tabla 'users' verificada o creada correctamente.")
+    except Exception as e:
+        print(f"⚠️ Error al crear la tabla 'users': {e}")
+
+
+create_users_table()
+
+# -------------------------------------------------
+# 🔹 Endpoint: Registrar usuario
 # -------------------------------------------------
 @router.post("/register")
 def register_user(user: RegisterUser):
@@ -43,22 +75,24 @@ def register_user(user: RegisterUser):
         conn = get_connection()
         cur = conn.cursor()
 
-        # 1. Verificar si el usuario ya existe
+        # Verificar si ya existe
         cur.execute("SELECT * FROM users WHERE username = %s;", (user.username,))
-        if cur.fetchone():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="El usuario ya existe")
+        existing_user = cur.fetchone()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El usuario ya existe"
+            )
 
-        # 2. Insertar el nuevo usuario. El rol 'LECTOR' se asignará por defecto.
-        cur.execute(
-            "INSERT INTO users (username, password) VALUES (%s, %s) RETURNING id, rol;",
-            (user.username, user.password)
-        )
-        new_user = cur.fetchone()
+        # Encriptar la contraseña (usando bcrypt)
+        hashed_pw = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+        cur.execute("INSERT INTO users (username, password) VALUES (%s, %s);", (user.username, hashed_pw))
         conn.commit()
         cur.close()
         conn.close()
 
-        return {"id": new_user['id'], "username": user.username, "rol": new_user['rol'], "message": "Usuario creado correctamente"}
+        return {"message": "Usuario creado correctamente"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al registrar usuario: {e}")
 
@@ -77,22 +111,16 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         if not user:
             raise HTTPException(status_code=401, detail="Usuario no encontrado")
 
-        # Verificar contraseña en texto plano
-        if user["password"] != form_data.password:
+        # Verificar contraseña
+        if not bcrypt.checkpw(form_data.password.encode("utf-8"), user["password"].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
         # Generar token simple (simulación)
-        token = f"token-para-{user['username']}"
+        token = f"token-{user['username']}"
 
         cur.close()
         conn.close()
 
-        # 👉 DEVOLVEMOS EL ROL JUNTO CON EL TOKEN
-        return {
-            "access_token": token,
-            "token_type": "bearer",
-            "username": user["username"],
-            "rol": user["rol"] # <--- ¡Clave para el Frontend!
-        }
+        return {"access_token": token, "token_type": "bearer", "username": user["username"]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el login: {e}")
