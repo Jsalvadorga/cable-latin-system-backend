@@ -45,6 +45,8 @@ app.add_middleware(
 # -------------------------------------------------
 def get_connection():
     db_url = os.getenv("DATABASE_URL")
+    print("DATABASE_URL actual:", db_url)  # 🔹 Log temporal para Render
+
     if db_url:
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
