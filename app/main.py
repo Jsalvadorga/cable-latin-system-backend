@@ -18,7 +18,7 @@ from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
 # ---------- Routers existentes ----------
-app.include_router(clients.router, prefix="/api/v1/clients", tags=["clients"])
+app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/auth", tags=["Users"])
 
@@ -29,11 +29,17 @@ app.include_router(payments.router, prefix="/api/v1", tags=["payments"])
 # -------------------------------------------------
 # 🔹 CORS
 # -------------------------------------------------
+origins = [
+    "https://cable-latin-system.web.app",  # tu frontend de Firebase
+    "http://localhost:5173",  # para desarrollo local (Vite)
+]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://cable-latin-system.web.app"],
+    allow_origins=origins,   # dominios permitidos
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["*"],     # GET, POST, PUT, DELETE
     allow_headers=["*"],
 )
 
