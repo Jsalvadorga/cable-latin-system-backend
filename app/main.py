@@ -23,15 +23,15 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/auth", tags=["Users"])
 
 # ---------- Nuevo: Router de Invoices ----------
-app.include_router(invoices.router, prefix="/api/v1", tags=["Invoices"])
-app.include_router(payments.router, prefix="/api/v1", tags=["Payments"])
+app.include_router(invoices.router, prefix="/api/v1", tags=["invoices"])
+app.include_router(payments.router, prefix="/api/v1", tags=["payments"])
 
 # -------------------------------------------------
 # 🔹 CORS
 # -------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://cable-latin-system.web.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
