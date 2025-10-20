@@ -4,6 +4,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from typing import List, Optional
 import os
+from datetime import date, datetime
 
 router = APIRouter(
     prefix="/api/v1/clients",
@@ -39,14 +40,39 @@ class ClientUpdate(BaseModel):
     vencimiento: Optional[str] = None
     last_payment: Optional[str] = None
 
-# ✅ GET: Listar clientes con todos los datos
+# ✅ GET: Listar clientes con todos los datos y calcular deuda y estado
 @router.get("/")
 def get_clients():
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Traer clientes
         cur.execute("SELECT * FROM clients ORDER BY created_at DESC;")
-        return cur.fetchall()
+        clientes = cur.fetchall()
+
+        # Traer facturas pendientes
+        cur.execute("SELECT client_id, SUM(amount) AS deuda_total, MAX(due_date) AS vencimiento FROM invoices WHERE status='pending' GROUP BY client_id;")
+        facturas = cur.fetchall()
+        facturas_dict = {f["client_id"]: f for f in facturas}
+
+        # Ajustar deuda y estado
+        today = date.today()
+        for cliente in clientes:
+            f = facturas_dict.get(cliente["id"])
+            deuda = float(f["deuda_total"]) if f and f["deuda_total"] else 0
+            vencimiento = datetime.strptime(f["vencimiento"], "%Y-%m-%d").date() if f and f["vencimiento"] else None
+
+            cliente["deuda"] = deuda
+            if deuda > 0:
+                # Suspender si ya venció
+                if vencimiento and vencimiento < today:
+                    cliente["activo"] = False
+                else:
+                    cliente["activo"] = True
+            else:
+                cliente["activo"] = True  # sin deuda, activo
+
+        return clientes
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener clientes: {e}")
     finally:
@@ -77,22 +103,30 @@ def create_client(client: ClientCreate):
         cur.close()
         conn.close()
 
-# ✅ PUT: Actualizar deuda, estado y vencimiento desde tu Facturacion.tsx
+# ✅ PUT: Actualizar deuda y estado automáticamente
 @router.put("/{client_id}")
 def update_client(client_id: int, client: ClientUpdate):
     conn = get_connection()
     cur = conn.cursor()
     try:
+        # Obtener deuda pendiente
+        cur.execute("SELECT SUM(amount) AS deuda_total FROM invoices WHERE client_id=%s AND status='pending';", (client_id,))
+        deuda_res = cur.fetchone()
+        deuda_pendiente = float(deuda_res["deuda_total"]) if deuda_res["deuda_total"] else 0
+
+        # Determinar estado automático si no se pasó manualmente
+        activo_final = client.activo if client.activo is not None else (deuda_pendiente == 0)
+
         cur.execute("""
             UPDATE clients
-            SET activo = COALESCE(%s, activo),
+            SET activo = %s,
                 deuda = COALESCE(%s, deuda),
                 vencimiento = COALESCE(%s, vencimiento),
                 last_payment = COALESCE(%s, last_payment)
             WHERE id = %s
             RETURNING *;
         """, (
-            client.activo,
+            activo_final,
             client.deuda,
             client.vencimiento,
             client.last_payment,
