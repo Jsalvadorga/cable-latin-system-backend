@@ -6,23 +6,21 @@ import psycopg2
 from app.api.v1.endpoints import auth
 from app.api.v1.endpoints import users
 from app.api.v1.endpoints import clients
-from app.api.v1.endpoints import invoices  # <-- Añadido
+from app.api.v1.endpoints import invoices
 from app.api.v1.endpoints import payments
 from psycopg2.extras import RealDictCursor
 import os
-from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
+from twilio.rest import Client as TwilioClient
 
 # -------------------------------------------------
 # 🔹 Configuración inicial
 # -------------------------------------------------
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
-# ---------- Routers existentes ----------
-app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
+# ---------- Routers ----------
+app.include_router(clients.router, prefix="/api/v1", tags=["clients"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
-app.include_router(users.router, prefix="/api/v1/auth", tags=["Users"])
-
-# ---------- Nuevo: Router de Invoices ----------
+app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(invoices.router, prefix="/api/v1", tags=["invoices"])
 app.include_router(payments.router, prefix="/api/v1", tags=["payments"])
 
@@ -30,16 +28,15 @@ app.include_router(payments.router, prefix="/api/v1", tags=["payments"])
 # 🔹 CORS
 # -------------------------------------------------
 origins = [
-    "https://cable-latin-system.web.app",  # tu frontend de Firebase
-    "http://localhost:5173",  # para desarrollo local (Vite)
+    "https://cable-latin-system.web.app",  # frontend Firebase
+    "http://localhost:5173",               # desarrollo local Vite
 ]
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,   # dominios permitidos
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],     # GET, POST, PUT, DELETE
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -47,10 +44,7 @@ app.add_middleware(
 # 🔹 Conexión a la base de datos PostgreSQL
 # -------------------------------------------------
 def get_connection():
-    """Devuelve una conexión activa a la base de datos (Render o local)."""
     db_url = os.getenv("DATABASE_URL")
-    print("DATABASE_URL actual:", db_url)  # 🔹 Log temporal para Render
-
     if db_url:
         if db_url.startswith("postgres://"):
             db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -71,7 +65,7 @@ def get_connection():
         )
 
 # -------------------------------------------------
-# 🔹 Crear tabla de clientes (si no existe)
+# 🔹 Crear tabla clientes si no existe
 # -------------------------------------------------
 def create_table_if_not_exists():
     try:
@@ -114,7 +108,7 @@ class Client(BaseModel):
     plan_type: str
 
 # -------------------------------------------------
-# 🔹 Endpoints CLIENTES
+# 🔹 Endpoints clientes /users /auth
 # -------------------------------------------------
 @app.get("/api/v1/clients")
 def get_clients():
@@ -128,7 +122,6 @@ def get_clients():
         return clients
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/api/v1/clients")
 def create_client(client: Client):
@@ -152,33 +145,25 @@ def create_client(client: Client):
         client_id = cur.fetchone()["id"]
         conn.commit()
 
-        # 🔹 Nuevo: devolver el cliente completo recién creado
         cur.execute("SELECT * FROM clients WHERE id = %s;", (client_id,))
         cliente_creado = cur.fetchone()
 
-        # -----------------------------
-        # 🔹 ENVÍO DE MENSAJE WHATSAPP
-        # -----------------------------
+        # Twilio WhatsApp
         try:
             TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
             TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-            TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")  # Formato: whatsapp:+14155238886
-
+            TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
             twilio_client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-
             mensaje = (
                 f"¡Hola {cliente_creado['full_name']}! 🎉\n"
                 "Bienvenido a Cable Latín System.\n"
                 "Tu primer pago será el mismo día del próximo mes, y luego se facturará mensualmente."
             )
-
             twilio_client.messages.create(
                 body=mensaje,
                 from_=f"whatsapp:{TWILIO_PHONE_NUMBER}",
                 to=f"whatsapp:{cliente_creado['phone_number']}"
             )
-
-            print(f"✅ Mensaje de bienvenida enviado a {cliente_creado['phone_number']}")
         except Exception as e:
             print(f"⚠️ No se pudo enviar mensaje WhatsApp: {e}")
 
@@ -187,7 +172,6 @@ def create_client(client: Client):
         return {"message": "Cliente creado correctamente", "client": cliente_creado}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.put("/api/v1/clients/{client_id}")
 def update_client(client_id: int, client: Client):
@@ -217,7 +201,6 @@ def update_client(client_id: int, client: Client):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"No se pudo actualizar el cliente: {e}")
 
-
 @app.delete("/api/v1/clients/{client_id}")
 def delete_client(client_id: int):
     try:
@@ -236,16 +219,13 @@ def delete_client(client_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# -------------------------------------------------
-# 🔹 NUEVO: Endpoints USUARIOS
-# -------------------------------------------------
+# 🔹 Usuarios y Auth
 class UserDB(BaseModel):
     username: str
     password: str
 
 @app.get("/api/v1/users")
 def get_users():
-    """Obtiene todos los usuarios registrados"""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -257,10 +237,8 @@ def get_users():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener usuarios: {e}")
 
-
 @app.delete("/api/v1/users/{user_id}")
 def delete_user(user_id: int):
-    """Elimina un usuario por su ID"""
     try:
         conn = get_connection()
         cur = conn.cursor()
@@ -277,10 +255,6 @@ def delete_user(user_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al eliminar usuario: {e}")
 
-
-# -------------------------------------------------
-# 🔹 Endpoint Login temporal
-# -------------------------------------------------
 @app.post("/api/v1/auth/token")
 def login(form_data: OAuth2PasswordRequestForm = Depends()):
     if form_data.username == "admin" and form_data.password == "1234":
@@ -288,10 +262,6 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
     else:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales incorrectas")
 
-
-# -------------------------------------------------
-# 🔹 Endpoint raíz
-# -------------------------------------------------
 @app.get("/")
 def root():
     return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente, sistema juanjo"}
