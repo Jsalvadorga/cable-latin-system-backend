@@ -17,5 +17,7 @@ class PaymentOut(BaseModel):
     payment_method: str
     notes: Optional[str]
 
-    class Config:
-        orm_mode = True
+    # Configuración para Pydantic V2
+    model_config = {
+        "from_attributes": True
+    }

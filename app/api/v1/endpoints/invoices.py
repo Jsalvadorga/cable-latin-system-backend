@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 import psycopg2
 from datetime import datetime
-from app.config.database import get_db  # Asegúrate de tener esta función de conexión
+from app.database import get_db  # Asegúrate de tener esta función de conexión
 
 router = APIRouter()
 
