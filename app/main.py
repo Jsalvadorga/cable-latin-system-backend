@@ -6,6 +6,8 @@ import psycopg2
 from app.api.v1.endpoints import auth
 from app.api.v1.endpoints import users
 from app.api.v1.endpoints import clients
+from app.api.v1.endpoints import invoices  # <-- Añadido
+from app.api.v1.endpoints import payments
 from psycopg2.extras import RealDictCursor
 import os
 from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
@@ -15,11 +17,18 @@ from twilio.rest import Client as TwilioClient  # 🔹 Import Twilio
 # -------------------------------------------------
 app = FastAPI(title="API de Clientes - Cable Latín System")
 
+# ---------- Routers existentes ----------
 app.include_router(clients.router, prefix="/api/v1/endpoint", tags=["clients"])
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["Auth"])
 app.include_router(users.router, prefix="/api/v1/auth", tags=["Users"])
 
+# ---------- Nuevo: Router de Invoices ----------
+app.include_router(invoices.router, prefix="/api/v1", tags=["Invoices"])
+app.include_router(payments.router, prefix="/api/v1", tags=["Payments"])
 
+# -------------------------------------------------
+# 🔹 CORS
+# -------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -82,7 +91,6 @@ def create_table_if_not_exists():
         print("✅ Tabla 'clients' verificada o creada correctamente.")
     except Exception as e:
         print(f"⚠️ Error al crear/verificar la tabla 'clients': {e}")
-
 
 create_table_if_not_exists()
 
@@ -222,7 +230,6 @@ def delete_client(client_id: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
 # -------------------------------------------------
 # 🔹 NUEVO: Endpoints USUARIOS
 # -------------------------------------------------
@@ -282,4 +289,3 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.get("/")
 def root():
     return {"message": "✅ API de Clientes y Usuarios de Cable Latín System funcionando correctamente, sistema juanjo"}
-
