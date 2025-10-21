@@ -12,7 +12,7 @@ router = APIRouter()
 # 🔹 Configuración de la conexión a la base de datos
 # -------------------------------------------------
 def get_connection():
-    db_url =os.getenv('DATABASE_URL')
+    db_url = os.getenv('DATABASE_URL')
 
     if db_url:
         # Render usa 'postgres://' pero psycopg2 requiere 'postgresql://'
@@ -43,7 +43,7 @@ class RegisterUser(BaseModel):
     password: str
 
 # -------------------------------------------------
-# 🔹 Crear tabla de usuarios si no existe (con 'password' y NO 'rol')
+# 🔹 Crear tabla de usuarios si no existe (con 'rol')
 # -------------------------------------------------
 def create_users_table():
     try:
@@ -53,7 +53,8 @@ def create_users_table():
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(50) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL
+                password VARCHAR(255) NOT NULL,
+                rol VARCHAR(20) DEFAULT 'USER'
             );
         """)
         conn.commit()
@@ -62,7 +63,6 @@ def create_users_table():
         print("✅ Tabla 'users' verificada o creada correctamente.")
     except Exception as e:
         print(f"⚠️ Error al crear la tabla 'users': {e}")
-
 
 create_users_table()
 
@@ -84,15 +84,19 @@ def register_user(user: RegisterUser):
                 detail="El usuario ya existe"
             )
 
-        # Encriptar la contraseña (usando bcrypt)
+        # Encriptar contraseña
         hashed_pw = bcrypt.hashpw(user.password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-        cur.execute("INSERT INTO users (username, password) VALUES (%s, %s);", (user.username, hashed_pw))
+        # Asignar rol: ADMIN solo si el username es 'administrador'
+        rol = "ADMIN" if user.username.lower() == "administrador" else "USER"
+
+        cur.execute("INSERT INTO users (username, password, rol) VALUES (%s, %s, %s);",
+                    (user.username, hashed_pw, rol))
         conn.commit()
         cur.close()
         conn.close()
 
-        return {"message": "Usuario creado correctamente"}
+        return {"message": "Usuario creado correctamente", "rol": rol}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al registrar usuario: {e}")
 
@@ -115,12 +119,18 @@ def login(form_data: OAuth2PasswordRequestForm = Depends()):
         if not bcrypt.checkpw(form_data.password.encode("utf-8"), user["password"].encode("utf-8")):
             raise HTTPException(status_code=401, detail="Contraseña incorrecta")
 
-        # Generar token simple (simulación)
+        # Token simple (simulación)
         token = f"token-{user['username']}"
 
         cur.close()
         conn.close()
 
-        return {"access_token": token, "token_type": "bearer", "username": user["username"]}
+        # ✅ Devuelve también el rol
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "username": user["username"],
+            "rol": user.get("rol", "USER")
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en el login: {e}")
